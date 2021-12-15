@@ -1,0 +1,118 @@
+version: "3.7"
+
+volumes:
+  prometheus_data: {}
+  grafana_data: {}
+
+services:
+  haproxy23:
+    image: haproxy:2.3.10-alpine
+    hostname: haproxy23
+    volumes:
+      - ./haproxy:/usr/local/etc/haproxy/config
+    command: [ "haproxy", "-f", "/usr/local/etc/haproxy/config" ]
+
+  haproxy24:
+    image: haproxy:2.4.9-alpine
+    hostname: haproxy24
+    volumes:
+      - ./haproxy:/usr/local/etc/haproxy/config
+    command: [ "haproxy", "-f", "/usr/local/etc/haproxy/config" ]
+
+  stress23:
+    image: alpine/bombardier:v1.2.5
+    command:
+      - "-q"
+      - "-c"
+      - "200"
+      - "-d"
+      - "10m"
+      - "http://haproxy23:9000/sample"
+
+  stress24:
+    image: alpine/bombardier:v1.2.5
+    command:
+      - "-q"
+      - "-c"
+      - "200"
+      - "-d"
+      - "10m"
+      - "http://haproxy24:9000/sample"
+
+  application:
+    image: application
+    hostname: application
+    build:
+      context: application/
+      dockerfile: Dockerfile
+
+  ### Monitoring
+  prometheus:
+    image: prom/prometheus:v2.17.1
+    container_name: prometheus
+    hostname: prometheus
+    volumes:
+      - ./monitoring/prometheus:/etc/prometheus
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+      - '--log.level=error'
+    restart: unless-stopped
+    labels:
+      org.label-schema.group: "monitoring"
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor
+    container_name: cadvisor
+    hostname: cadvisor
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:rw
+      - /sys:/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
+    restart: unless-stopped
+    labels:
+      org.label-schema.group: "monitoring"
+
+  grafana:
+    image: grafana/grafana:7.5.9
+    container_name: grafana
+    hostname: grafana
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_NAME=Main Org.
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Editor
+      - GF_LOG_LEVEL=critical
+    restart: unless-stopped
+    ports:
+      - 3000:3000
+    labels:
+      org.label-schema.group: "monitoring"
+
+  nodeexporter:
+    image: prom/node-exporter:v0.18.1
+    container_name: nodeexporter
+    hostname: nodeexporter
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.rootfs=/rootfs'
+      - '--path.sysfs=/host/sys'
+      - '--collector.filesystem.ignored-mount-points=^/(sys|proc|dev|host|etc)($$|/)'
+    restart: unless-stopped
+    labels:
+      org.label-schema.group: "monitoring"
